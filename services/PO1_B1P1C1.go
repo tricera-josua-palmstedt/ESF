@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"math"
 )
 
@@ -10,7 +11,7 @@ type esf_service interface {
 
 type PO1_B1P1C1 struct {
 	Params Parameter_PO1_B1P1C1
-	state  SocState
+	state  socState
 }
 
 type Parameter_PO1_B1P1C1 struct {
@@ -25,9 +26,9 @@ type Parameter_PO1_B1P1C1 struct {
 	DpPvControl               float64
 }
 
-type SocState struct {
-	SocBelowTarget  bool
-	SocBelowReserve bool
+type socState struct {
+	socBelowTarget  bool
+	socBelowReserve bool
 }
 
 type ServiceInit struct {
@@ -35,18 +36,19 @@ type ServiceInit struct {
 	Parameter Parameter_PO1_B1P1C1
 }
 
-//	type ServiceData struct {
-//		poc       Poc
-//		Batteries []*energy.BatteryPowerControl
-//		Pvs       []*energy.PvPowerControl
-//		Loads     []*energy.LoadPowerControl
-//	}
 type ServiceData struct {
-	Poc     Poc
-	Battery BatteryPowerControl
-	Pv      PvPowerControl
-	Load    LoadPowerControl
+	Poc       Poc
+	Batteries []*BatteryPowerControl
+	Pvs       []*PvPowerControl
+	Loads     []*LoadPowerControl
 }
+
+// type ServiceData struct {
+// 	Poc     Poc
+// 	Battery BatteryPowerControl
+// 	Pv      PvPowerControl
+// 	Load    LoadPowerControl
+// }
 
 func (s *PO1_B1P1C1) Execute(input ServiceData) (output ServiceData) {
 
@@ -57,34 +59,45 @@ func (s *PO1_B1P1C1) Execute(input ServiceData) (output ServiceData) {
 
 	data := input
 
-	poc := data.Poc
+	var bpc *BatteryPowerControl
+	var ppc *PvPowerControl
+	var lpc *LoadPowerControl
 
-	bpc := data.Battery
-	ppc := data.Pv
-	lpc := data.Load
+	var poc Poc
+
+	if len(data.Batteries) == 1 && len(data.Pvs) == 1 && len(data.Loads) == 1 {
+		bpc = data.Batteries[0]
+		ppc = data.Pvs[0]
+		lpc = data.Loads[0]
+		// Also check if there is POC
+		poc = data.Poc
+	} else {
+		// Raise error. How?
+		fmt.Printf("PO1_B1P1C1 needs exactly 1 of each powercontrols!")
+	}
 
 	pResidual := poc.P - bpc.P
 
 	// Hysteresis definition
 	if bpc.Soc >= s.Params.SocTarget+s.Params.DsocTargetHyst {
-		s.state.SocBelowTarget = false
+		s.state.socBelowTarget = false
 	} else if bpc.Soc < s.Params.SocTarget {
-		s.state.SocBelowTarget = true
+		s.state.socBelowTarget = true
 	}
 
 	if bpc.Soc >= s.Params.SocReserve {
-		s.state.SocBelowReserve = false
+		s.state.socBelowReserve = false
 	} else if bpc.Soc < s.Params.SocReserve {
-		s.state.SocBelowReserve = true
+		s.state.socBelowReserve = true
 	}
 
 	var pPocMaxTarget float64
 	var pPocMinTarget float64
 
-	if !s.state.SocBelowTarget {
+	if !s.state.socBelowTarget {
 		pPocMaxTarget = 0
 		pPocMinTarget = 0
-	} else if !s.state.SocBelowReserve {
+	} else if !s.state.socBelowReserve {
 		pPocMaxTarget = 0
 		pPocMinTarget = s.Params.PCutConsumption
 	} else {
@@ -122,7 +135,7 @@ func (s *PO1_B1P1C1) Execute(input ServiceData) (output ServiceData) {
 	pPvSet = limit(pPvSet, ppc.PMin, ppc.PMax)
 
 	var pClSet float64
-	if !s.state.SocBelowTarget {
+	if !s.state.socBelowTarget {
 		pClSet = lpc.PFromGrid - ppc.P
 	} else {
 		pClSet = lpc.PFromGrid - ppc.P - bpc.Limit.PMax
@@ -138,17 +151,17 @@ func (s *PO1_B1P1C1) Execute(input ServiceData) (output ServiceData) {
 
 	//s.storageVars.pResidual = pResidual
 
-	bpc.PPriority = 2
 	ppc.PPriority = 1
-	lpc.PPriority = 3
-	poc.PPriority = 4
+	lpc.PPriority = 2
+	poc.PPriority = 3
+	bpc.PPriority = 4
 
 	output = ServiceData{}
 
 	output.Poc = poc
-	output.Battery = bpc
-	output.Pv = ppc
-	output.Load = lpc
+	output.Batteries[0] = bpc
+	output.Pvs[0] = ppc
+	output.Loads[0] = lpc
 
 	return
 }
